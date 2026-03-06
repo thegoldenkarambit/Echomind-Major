@@ -5,45 +5,150 @@ import PromptInput from "@/components/PromptInput";
 import ResponsePanel from "@/components/ResponsePanel";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 
-const mockResponses = {
-  a: {
-    model: "Model A",
-    text: "Artificial Intelligence represents a transformative paradigm shift in computational capabilities. Through sophisticated neural network architectures and deep learning algorithms, AI systems can now process vast amounts of unstructured data, identify complex patterns, and generate insights that were previously impossible for traditional computing methods. The implications span across healthcare, finance, autonomous systems, and creative industries, fundamentally reshaping how we approach problem-solving and decision-making in the modern era.",
-    score: 87,
-    wordCount: 62,
-    readability: 72,
-  },
-  b: {
-    model: "Model B",
-    text: "AI is the simulation of human intelligence by machines. It includes learning from data, reasoning through problems, and self-correction. Key areas include machine learning, natural language processing, and computer vision. AI is used in virtual assistants, recommendation systems, medical diagnosis, and self-driving cars. While powerful, AI raises important questions about ethics, bias, job displacement, and the need for responsible development practices to ensure beneficial outcomes for society.",
-    score: 74,
-    wordCount: 65,
-    readability: 85,
-  },
-};
+function cleanText(text: string) {
+
+  if (!text) return "";
+
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/g, "")
+    .replace(/\*\*/g, "")
+    .replace(/#+/g, "")
+    .replace(/\n+/g, " ")
+    .trim();
+}
+
+function truncate(text: string, max = 7000) {
+  if (text.length <= max) return text;
+  return text.substring(0, max) + "...";
+}
+
+function readability(text: string) {
+
+  const words = text.split(/\s+/).length;
+  const sentences = text.split(/[.!?]/).length;
+
+  return Math.max(30, Math.min(100, Math.round((words / sentences) * 6)));
+}
+
+function relevance(prompt: string, text: string) {
+
+  const promptWords = new Set(prompt.toLowerCase().split(" "));
+  const textWords = new Set(text.toLowerCase().split(" "));
+
+  let match = 0;
+
+  promptWords.forEach(w => {
+    if (textWords.has(w)) match++;
+  });
+
+  return Math.round((match / promptWords.size) * 100);
+}
+
+function structure(text: string) {
+
+  let score = 50;
+
+  if (text.includes(":")) score += 10;
+  if (text.includes("1.") || text.includes("-")) score += 20;
+  if (text.length > 300) score += 10;
+
+  return Math.min(100, score);
+}
+
+function depth(text: string) {
+
+  const words = text.split(/\s+/);
+  const unique = new Set(words);
+
+  return Math.min(100, Math.round((unique.size / words.length) * 120));
+}
+
+function coherence(text: string) {
+
+  const words = text.split(/\s+/);
+  const unique = new Set(words);
+
+  return Math.round((unique.size / words.length) * 100);
+}
+
+function finalScore(metrics: any) {
+
+  return Math.round(
+    metrics.relevance * 0.35 +
+    metrics.depth * 0.25 +
+    metrics.readability * 0.20 +
+    metrics.structure * 0.20
+  );
+}
 
 const Compare = () => {
-  const [prompt, setPrompt] = useState("");
-  const [hasCompared, setHasCompared] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
 
-  const handleCompare = () => {
+  const [prompt, setPrompt] = useState("");
+  const [responses, setResponses] = useState<any[]>([]);
+  const [bestModel, setBestModel] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasCompared, setHasCompared] = useState(false);
+
+  const handleCompare = async () => {
+
     if (!prompt.trim()) return;
+
     setIsLoading(true);
-    setTimeout(() => {
-      setHasCompared(true);
-      setIsLoading(false);
-    }, 1500);
+
+    const res = await fetch("http://127.0.0.1:8000/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt })
+    });
+
+    const data = await res.json();
+
+    const models = Object.entries(data.responses);
+
+    const processed = models.map(([name, text]: any) => {
+
+      const cleaned = cleanText(text);
+
+      const metrics = {
+        readability: readability(cleaned),
+        relevance: relevance(prompt, cleaned),
+        structure: structure(cleaned),
+        depth: depth(cleaned),
+        coherence: coherence(cleaned)
+      };
+
+      return {
+        model: name,
+        fullText: cleaned,
+        text: truncate(cleaned),
+        ...metrics,
+        score: finalScore(metrics)
+      };
+
+    });
+
+    let best = processed[0];
+
+    processed.forEach(r => {
+      if (r.score > best.score) best = r;
+    });
+
+    setBestModel(best);
+    setResponses(processed);
+
+    setHasCompared(true);
+    setIsLoading(false);
   };
 
-  const bestModel = mockResponses.a.score >= mockResponses.b.score ? "a" : "b";
-
   return (
+
     <div className="min-h-screen grid-bg relative">
+
       <ParticleBackground />
       <Navbar />
 
       <main className="relative z-10 pt-24 pb-12 px-4 md:px-8 max-w-7xl mx-auto">
+
         <h2 className="font-display text-2xl md:text-3xl font-bold neon-text text-center mb-8 tracking-wider">
           AI Comparison Console
         </h2>
@@ -56,30 +161,42 @@ const Compare = () => {
         />
 
         {hasCompared && (
+
           <div className="animate-fade-in">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-              <ResponsePanel
-                model={mockResponses.a.model}
-                text={mockResponses.a.text}
-                score={mockResponses.a.score}
-                isBest={bestModel === "a"}
-              />
-              <ResponsePanel
-                model={mockResponses.b.model}
-                text={mockResponses.b.text}
-                score={mockResponses.b.score}
-                isBest={bestModel === "b"}
-              />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-8">
+
+              {responses.map((r, i) => (
+
+                <ResponsePanel
+                  key={i}
+                  model={r.model}
+                  text={r.text}
+                  score={r.score}
+                  isBest={bestModel?.model === r.model}
+                />
+
+              ))}
+
             </div>
 
-            <AnalyticsDashboard
-              modelA={mockResponses.a}
-              modelB={mockResponses.b}
-            />
+            {bestModel && (
+
+              <AnalyticsDashboard
+                bestModel={bestModel}
+                models={responses}
+              />
+
+            )}
+
           </div>
+
         )}
+
       </main>
+
     </div>
+
   );
 };
 
